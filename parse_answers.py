@@ -117,6 +117,57 @@ def shorten_labels(labels):
     # Concat shortened labels with removed prefix
     return [common + s for s in shortened_suffixes]
 
+def extract_selections(answer):
+    l = re.findall('\{[^\}]*\}', answer)
+    if ' '.join(l) == answer:
+        return list(l)
+    return None
+
+def compute_num_selections(answer):
+    selections = extract_selections(answer) or []
+    return len(selections)
+
+def extract_selection(answer, i):
+    selections = extract_selections(answer)
+    if selections is None:
+        return None
+    return selections[i]
+
+for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
+    print("Attempting to parse as 'select missing words' question", c)
+
+    column_i = c[len('Right answer '):]
+    column_answer = 'Right answer ' + column_i
+    column_response = 'Response ' + column_i
+
+    df_responses[column_answer].fillna('', inplace=True)
+    df_responses[column_response].fillna('', inplace=True)
+
+    num_selections = df_responses[column_answer] \
+        .apply(lambda x: compute_num_selections(x)) \
+        .unique().tolist()
+
+    if len(num_selections) != 1 or num_selections[0] == 0:
+        print("  No selections found.")
+        continue
+
+    num_selections = num_selections[0]
+    print("  Success! {} gaps found.".format(num_selections))
+
+    for i in range(num_selections):
+        column_part = '{0}: part {1}'.format(column_response, i + 1)
+        if column_part in df_parts.columns:
+            print("  Already parsed previously.")
+            break
+        df_parts[column_part] = \
+                df_responses[column_response] \
+                        .apply(lambda r: extract_selection(r, i))
+
+        answer_column_part = '{0}: part {1}'.format(column_answer, i + 1)
+        df_right_answers[answer_column_part] = \
+                df_responses[column_answer] \
+                        .apply(lambda r: extract_selection(r, i))
+
 def compute_options(s):
     if not type(s) is str:
         return None
@@ -141,7 +192,7 @@ def extract_choice(row, i):
         return m.group(1)
 
 for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
-    print("Attempting to parse as generic question", c)
+    print("Attempting to parse as generic question with parts", c)
 
     column_i = c[len('Right answer '):]
     column_answer = 'Right answer ' + column_i
@@ -159,8 +210,8 @@ for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
 
     for i, o in enumerate(options):
         column_part = '{0}: {1}'.format(column_response, o)
-        if column_part in df_responses.columns:
-            print("  Already parsed as Cloze question.")
+        if column_part in df_parts.columns:
+            print("  Already parsed previously.")
             break
         df_parts[column_part] = \
                 df_responses[[column_answer, column_response]] \
@@ -170,6 +221,85 @@ for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
         df_right_answers[answer_column_part] = \
                 df_responses[[column_answer, column_answer]] \
                         .apply(lambda r: extract_choice(r, i), axis=1)
+
+def extract_mappings(answer):
+    answers = answer.split('; ')
+    return dict([a.split(' -> ') for a in answers])
+
+def extract_mapping(answer, i):
+    try:
+        answers = extract_mappings(answer)
+    except BaseException:
+        return None
+    return list(answers.values())[i]
+
+for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
+    print("Attempting to parse as mapping question", c)
+
+    parsed_questions = set((c.split(':')[0] for c in df_right_answers.columns))
+    if c in parsed_questions:
+        print("  Already parsed previously.")
+        continue
+
+    column_i = c[len('Right answer '):]
+    column_answer = 'Right answer ' + column_i
+    column_response = 'Response ' + column_i
+
+    df_responses[column_answer].fillna('', inplace=True)
+    df_responses[column_response].fillna('', inplace=True)
+
+    mappings = None
+    try:
+        mappings = df_responses[column_answer] \
+            .apply(lambda a: str(extract_mappings(a))) \
+            .unique().tolist()
+    except BaseException:
+        pass
+    if mappings is None or len(mappings) != 1:
+        print("  No mapping found.")
+        continue
+
+    mappings = extract_mappings(df_responses[column_answer].iloc[0])
+    mappings = dict(zip(shorten_labels(mappings.keys()), mappings.values()))
+
+    print(" Success! Found mappings:", list(mappings.keys()))
+
+    for i, m in enumerate(mappings.keys()):
+        column_part = '{0}: {1}'.format(column_response, m)
+        df_parts[column_part] = \
+                df_responses[column_response] \
+                        .apply(lambda r: extract_mapping(r, i))
+
+        answer_column_part = '{0}: {1}'.format(column_answer, m)
+        df_right_answers[answer_column_part] = \
+                df_responses[column_answer] \
+                        .apply(lambda r: extract_mapping(r, i))
+
+for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
+    print("Attempting to parse as generic question", c)
+
+    parsed_questions = set((c.split(':')[0] for c in df_right_answers.columns))
+    if c in parsed_questions:
+        print("  Already parsed previously.")
+        continue
+
+    column_i = c[len('Right answer '):]
+    column_answer = 'Right answer ' + column_i
+    column_response = 'Response ' + column_i
+
+    df_responses[column_answer].fillna('', inplace=True)
+    df_responses[column_response].fillna('', inplace=True)
+
+    responses = df_responses[column_response] \
+            .replace(['Wahr', 'Falsch'], ['True', 'False'])
+
+    print("  Listing all {} given answers...".format(
+        len(responses.unique().tolist())))
+
+    df_parts[column_response + ': (unique part)'] = responses
+    df_right_answers[column_answer + ': (unique part)'] = \
+            df_responses[column_answer] \
+                    .replace(['Wahr', 'Falsch'], ['True', 'False'])
 
 # Run external checks
 if bool(args.check_question) ^ bool(args.external_check):
