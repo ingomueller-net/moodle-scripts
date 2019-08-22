@@ -109,14 +109,20 @@ def compute_options(s):
     parts = s.split('; ')
     if any(len(p.split(': ')) != 2 for p in parts):
         return None
-    return [p.split(': ')[0] for p in parts]
+    result = []
+    for part in parts:
+        part = part.split(': ')[0]
+        if part.startswith('Teil '):
+            part = 'part ' + part[len('Teil '):]
+        result.append(part)
+    return sorted(result)
 
 def extract_choice(row, i):
-    options = compute_options(row[0])
-    if not row[1]:
+    options = compute_options(row.iloc[0])
+    if not row.iloc[1]:
         return None
     pattern = '{0}: ([^;]*)(;.*)?'.format(re.escape(options[i]))
-    m = re.search(pattern, row[1])
+    m = re.search(pattern, row.iloc[1])
     if m:
         return m.group(1)
 
