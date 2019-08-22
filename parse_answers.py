@@ -80,6 +80,8 @@ def shorten_labels(labels):
     # Base cases
     if len(labels) == 0:
         return labels
+    if max(map(len, labels)) <= 3:
+        return labels
     if len(labels) == 1:
         if len(labels[0]) > 12:
             return [labels[0][0:9] + '...']
