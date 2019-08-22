@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from collections import Counter
 import io
 from os.path import commonprefix
 import pandas as pd
@@ -21,6 +22,10 @@ parser.add_argument('-e', '--excel',
                     help='Output file (Excel format) with parsed quiz answers.')
 parser.add_argument('-c', '--csv',
                     help='Output file (CSV format) with parsed quiz answers.')
+parser.add_argument('-S', '--Stats',
+                    help='Output file (Excel format) with statistics.')
+parser.add_argument('-s', '--stats',
+                    help='Output file (CSV format) with statistics.')
 parser.add_argument('-q', '--check-question', nargs='+',
                     help='Label of question(s) that should be checked.')
 parser.add_argument('-x', '--external-check', nargs='+',
@@ -38,6 +43,8 @@ grades_file = io.StringIO(args.grades_file.read()
 # Read data from CSV
 df_responses = pd.read_csv(responses_file)
 df_grades = pd.read_csv(grades_file)
+df_parts = pd.DataFrame()
+df_right_answers = pd.DataFrame()
 
 # Helper to get the number of parts of a Cloze question
 def compute_num_parts(s):
@@ -71,7 +78,14 @@ for c in [c for c in df_responses.columns if c.startswith('Response ')]:
  
         for i in range(1, num_parts + 1):
             new_response = '{0}: part {1}'.format(c, i)
-            df_responses[new_response] = df_responses[c] \
+            df_parts[new_response] = df_responses[c] \
+                    .apply(lambda x: extract_part(x, i, num_parts))
+
+        for i in range(1, num_parts + 1):
+            right_answer_column = 'Right answer' + c[len('Response'):]
+            right_answer_part = '{0}: part {1}'.format(right_answer_column, i)
+            df_right_answers[right_answer_part] = \
+                df_responses[right_answer_column] \
                     .apply(lambda x: extract_part(x, i, num_parts))
         continue
     print("  Not a Cloze question. Parts found: ", num_parts)
@@ -148,8 +162,13 @@ for c in [c for c in df_responses.columns if c.startswith('Right answer ')]:
         if column_part in df_responses.columns:
             print("  Already parsed as Cloze question.")
             break
-        df_responses[column_part] = \
+        df_parts[column_part] = \
                 df_responses[[column_answer, column_response]] \
+                        .apply(lambda r: extract_choice(r, i), axis=1)
+
+        answer_column_part = '{0}: {1}'.format(column_answer, o)
+        df_right_answers[answer_column_part] = \
+                df_responses[[column_answer, column_answer]] \
                         .apply(lambda r: extract_choice(r, i), axis=1)
 
 # Run external checks
@@ -164,10 +183,38 @@ if args.check_question:
                 .apply(lambda x: "" if x is None else x) \
                 .apply(lambda x: subprocess.call(command.format(x)))
 
+# Produce stats
+df_stats = pd.DataFrame()
+for c in sorted(df_parts.columns,
+                key=lambda s: int(re.search('Response (\d+):', s).group(1))):
+    right_answer_column = 'Right answer' + c[len('Response'):]
+    right_answer = df_right_answers[right_answer_column]
+    assert len(set(right_answer)) == 1
+    right_answer = set(right_answer).pop()
+
+    frequencies = dict(Counter(df_parts[c]))
+    answers = [(right_answer, frequencies.pop(right_answer, 0))]
+    answers += sorted(frequencies.items(), key=lambda x: x[1], reverse=True)
+
+    answers = [(a, n, int(n/len(df_parts.index) * 100 * 10) / 10)
+               for (a, n) in answers]
+    columns = ['{} ({})'.format(c, metric)
+               for metric in ['answer', 'number', 'frequency']]
+    df_stats = pd.concat([df_stats, pd.DataFrame(answers, columns=columns)],
+                         axis=1)
+if args.excel:
+    df_stats.to_excel(args.Stats)
+elif args.csv:
+    df_stats.to_csv(args.stats)
+
 # Join responses and grades
-df_grades.drop(axis=1, inplace=True, labels=
-        ['Surname', 'First name', 'Matriculation number', 'Institution',
-         'Department', 'State', 'Started on', 'Completed', 'Time taken'])
+df_responses = pd.concat([df_responses, df_parts], axis=1)
+columns_to_drop = [
+    'Surname', 'First name', 'Matriculation number', 'Institution',
+    'Department', 'State', 'Started on', 'Completed', 'Time taken',
+]
+columns_to_drop = [c for c in columns_to_drop if c in df_grades.columns]
+df_grades.drop(axis=1, inplace=True, labels=columns_to_drop)
 df = df_responses.merge(df_grades, on='Email address')
 
 # Save result
