@@ -106,13 +106,18 @@ def shorten_labels(labels):
     suffixes = [l[len(common):] for l in labels]
     if len(common) > 5:
         common = common[0:5] + '...' + common[-5:]
-    suffixes = pytrie.StringTrie.fromkeys(suffixes)
+    suffix_trie = pytrie.StringTrie.fromkeys(suffixes)
 
     # Partition by next 3 characters and recurse
-    shortened_suffixes = set()
+    shortened_suffixes = {}
     next_radixes = set((l[0:3] for l in suffixes))
     for r in next_radixes:
-        shortened_suffixes.update(shorten_labels(suffixes.keys(prefix=r)))
+        suffixes_starting_with_r = \
+            [s for s in suffixes if s in suffix_trie.keys(prefix=r)]
+        shortened_suffixes.update(
+            zip(suffixes_starting_with_r,
+                shorten_labels(suffixes_starting_with_r)))
+    shortened_suffixes = [shortened_suffixes[s] for s in suffixes]
 
     # Concat shortened labels with removed prefix
     return [common + s for s in shortened_suffixes]
